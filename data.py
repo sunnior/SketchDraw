@@ -10,21 +10,24 @@ class SessionMode(Enum):
     
 def load_data(data_pattern, mode, batch_size):
 
-    def _parse_tfexample_fn(example_proto, mode):
+    def _get_input_tensors(features, labels):
+        inks = tf.reshape(features['ink'], [batch_size, -1, 3])
+        labels = tf.squeeze(labels)
+        lengths = tf.squeeze(tf.slice(features['shape'], begin=[0, 0], size=[batch_size, 1]))
+        return inks, lengths, labels
+
+    def _parse_tfexample_fn(example_proto):
         """Parse a single record which is expected to be a tensorflow.Example."""
         feature_to_type = {
             "ink": tf.VarLenFeature(dtype=tf.float32),
             "shape": tf.FixedLenFeature([2], dtype=tf.int64)
         }
-        if mode == SessionMode.TRAIN:
-            # The labels won't be available at inference time, so don't add them
-            # to the list of feature_columns to be read.
-            feature_to_type["class_index"] = tf.FixedLenFeature([1], dtype=tf.int64)
+
+        feature_to_type["class_index"] = tf.FixedLenFeature([1], dtype=tf.int64)
 
         parsed_features = tf.parse_single_example(example_proto, feature_to_type)
-        labels = None
-        if mode == SessionMode.TRAIN:
-            labels = parsed_features["class_index"]
+
+        labels = parsed_features["class_index"]
     
         parsed_features["ink"] = tf.sparse_tensor_to_dense(parsed_features["ink"])
         return parsed_features, labels
@@ -35,17 +38,18 @@ def load_data(data_pattern, mode, batch_size):
         dataset = dataset.shuffle(buffer_size=10)
 
     dataset = dataset.interleave(tf.data.TFRecordDataset, cycle_length=10, block_length=1)
-    dataset = dataset.take(64)
-    dataset = dataset.repeat()    
-    dataset = dataset.map(functools.partial(_parse_tfexample_fn, mode=mode), num_parallel_calls=10)
-    dataset = dataset.prefetch(10000)
+    dataset = dataset.take(64)    
+    dataset = dataset.repeat()
+    dataset = dataset.map(_parse_tfexample_fn, num_parallel_calls=10)
 
     if mode == SessionMode.TRAIN:
-        dataset = dataset.shuffle(buffer_size=1000000)
+        dataset = dataset.shuffle(buffer_size=64)
+
+    dataset = dataset.prefetch(64)
     # Our inputs are variable length, so pad them.
     dataset = dataset.padded_batch(batch_size, padded_shapes=dataset.output_shapes)
     features, labels = dataset.make_one_shot_iterator().get_next()
-    return features, labels
+    return _get_input_tensors(features, labels)
 
 def plot(ink):
     ink = np.reshape(ink, (-1, 3))

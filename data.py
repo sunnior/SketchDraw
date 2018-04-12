@@ -33,11 +33,12 @@ def load_data(data_pattern, mode, batch_size):
     #todo: why shuffle here.
     if mode == SessionMode.TRAIN:
         dataset = dataset.shuffle(buffer_size=10)
-    
-    dataset = dataset.repeat()
+
     dataset = dataset.interleave(tf.data.TFRecordDataset, cycle_length=10, block_length=1)
+    dataset = dataset.take(64)
+    dataset = dataset.repeat()    
     dataset = dataset.map(functools.partial(_parse_tfexample_fn, mode=mode), num_parallel_calls=10)
-    #dataset = dataset.prefetch(10000)
+    dataset = dataset.prefetch(10000)
 
     if mode == SessionMode.TRAIN:
         dataset = dataset.shuffle(buffer_size=1000000)
@@ -62,3 +63,10 @@ def plot(ink):
             pre_i = i+1
 
     plt.show()
+
+def get_num_classes(classes_file):
+    classes = []
+    with tf.gfile.GFile(classes_file, "r") as f:
+        classes = [x for x in f]
+        num_classes = len(classes)
+    return num_classes
